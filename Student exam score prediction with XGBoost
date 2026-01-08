@@ -1,0 +1,305 @@
+setwd("C:")
+
+library(tidyverse)
+library(fastDummies)
+library(xgboost)
+library(corrplot)
+
+### Datasets downloaded from Kaggle. Link in the description file. ###
+
+train <- read.csv('train.csv', header = T)
+test <- read.csv('test.csv', header = T)
+
+y <- train$exam_score
+
+###################################################
+#             Training dataset                    #
+###################################################
+
+str(train)
+
+### Separating numerical values for adjusting ###
+
+train_num <- train[2:8]
+train_num <- train_num[-2:-3]
+train_num <- train_num[-4]
+
+train_num <- train_num |> 
+  mutate(age = log(age),
+         study_hours = study_hours/24,
+         class_attendance = class_attendance/100,
+         sleep_hours = sleep_hours/24)
+
+### Binary coding internet access variable ###
+
+internet_train <- ifelse(train$internet_access == "yes", 1, 0)
+
+### Changing categorical variables with three values ###
+
+triplecat <- train |> 
+  select('sleep_quality', 'facility_rating', 'exam_difficulty') |> 
+  mutate(sleep_quality = str_replace(sleep_quality, 'poor', '1')) |> 
+  mutate(sleep_quality = str_replace(sleep_quality, 'average', '2')) |> 
+  mutate(sleep_quality = str_replace(sleep_quality, 'good', '3')) |> 
+  mutate(facility_rating = str_replace(facility_rating, 'low', '1')) |> 
+  mutate(facility_rating = str_replace(facility_rating, 'medium', '2')) |> 
+  mutate(facility_rating = str_replace(facility_rating, 'high', '3')) |> 
+  mutate(exam_difficulty = str_replace(exam_difficulty, 'easy', '1')) |> 
+  mutate(exam_difficulty = str_replace(exam_difficulty, 'moderate', '2')) |> 
+  mutate(exam_difficulty = str_replace(exam_difficulty, 'hard', '3')) |> 
+  mutate(sleep_quality = as.numeric(sleep_quality)) |> 
+  mutate(facility_rating = as.numeric(facility_rating)) |> 
+  mutate(exam_difficulty = as.numeric(exam_difficulty))
+
+### Dummy coding the rest ###
+
+gender_train <- fastDummies::dummy_cols(train$gender)
+course_train <- fastDummies::dummy_cols(train$course)
+method_train <- fastDummies::dummy_cols(train$study_method)
+
+### Compiling all the pieces into new dataframe ###
+
+final_train <- data.frame(id = train$id,
+                          age = train_num$age,
+                          gender_male = gender_train$.data_male,
+                          gender_female = gender_train$.data_female,
+                          course_ba = course_train$.data_ba,
+                          course_bba = course_train$.data_bba,
+                          course_bca = course_train$.data_bca,
+                          course_com = course_train$.data_b.com,
+                          course_sc = course_train$.data_b.sc,
+                          course_diploma = course_train$.data_diploma,
+                          study_hours = train_num$study_hours,
+                          class_attendance = train_num$class_attendance,
+                          internet_access = internet_train,
+                          sleep_hours = train_num$sleep_hours,
+                          sleep_quality = triplecat$sleep_quality,
+                          study_method_group = method_train$`.data_group study`,
+                          study_method_mixed = method_train$.data_mixed,
+                          study_method_online = method_train$`.data_online videos`,
+                          study_method_self = method_train$`.data_self-study`,
+                          facility_rating = triplecat$facility_rating,
+                          exam_difficulty = triplecat$exam_difficulty)
+
+### Dataframe with feature engineered variables added
+
+final_train_fe <- data.frame(id = train$id,
+                          age = train_num$age,
+                          gender_male = gender_train$.data_male,
+                          gender_female = gender_train$.data_female,
+                          course_ba = course_train$.data_ba,
+                          course_bba = course_train$.data_bba,
+                          course_bca = course_train$.data_bca,
+                          course_com = course_train$.data_b.com,
+                          course_sc = course_train$.data_b.sc,
+                          course_diploma = course_train$.data_diploma,
+                          study_hours = train_num$study_hours,
+                          class_attendance = train_num$class_attendance,
+                          internet_access = internet_train,
+                          sleep_hours = train_num$sleep_hours,
+                          sleep_quality = triplecat$sleep_quality,
+                          study_method_group = method_train$`.data_group study`,
+                          study_method_mixed = method_train$.data_mixed,
+                          study_method_online = method_train$`.data_online videos`,
+                          study_method_self = method_train$`.data_self-study`,
+                          facility_rating = triplecat$facility_rating,
+                          exam_difficulty = triplecat$exam_difficulty,
+                          study_per_sleep = train_num$study_hours / train_num$sleep_hours,
+                          sleep_x_attendance = log(train$sleep_hours * train_num$class_attendance),
+                          internet_online = internet_train * method_train$`.data_online videos`,
+                          sleeq_x_facilitr = log(triplecat$sleep_quality * triplecat$facility_rating),
+                          sleeq_x_exad = log(triplecat$sleep_quality * triplecat$exam_difficulty),
+                          facilitr_x_exad = log(triplecat$facility_rating * triplecat$exam_difficulty),
+                          exad_x_attendance = triplecat$exam_difficulty * train_num$class_attendance,
+                          facilitr_x_study = log(triplecat$facility_rating * train$study_hours),
+                          facilitr_x_attendance = triplecat$facility_rating * train_num$class_attendance,
+                          sleep_x_sleeq = log(train$sleep_hours * triplecat$sleep_quality))
+
+str(final_train)
+str(final_train_fe)
+
+xbg_train <- final_train[, -1]
+xbg_fe_train <- final_train_fe[, -1]
+
+
+###################################################
+#             Testing dataset                    #
+###################################################
+
+str(test)
+
+### Separating numerical values for adjusting ###
+
+test_num <- test[2:8]
+test_num <- test_num[-2:-3]
+test_num <- test_num[-4]
+
+test_num <- test_num |> 
+  mutate(age = log(age),
+         study_hours = study_hours/24,
+         class_attendance = class_attendance/100,
+         sleep_hours = sleep_hours/24)
+
+### Binary coding internet access variable ###
+
+internet_test <- ifelse(test$internet_access == "yes", 1, 0)
+
+### Changing categorical variables with three values ###
+
+testtriple <- test |> 
+  select('sleep_quality', 'facility_rating', 'exam_difficulty') |> 
+  mutate(sleep_quality = str_replace(sleep_quality, 'poor', '1')) |> 
+  mutate(sleep_quality = str_replace(sleep_quality, 'average', '2')) |> 
+  mutate(sleep_quality = str_replace(sleep_quality, 'good', '3')) |> 
+  mutate(facility_rating = str_replace(facility_rating, 'low', '1')) |> 
+  mutate(facility_rating = str_replace(facility_rating, 'medium', '2')) |> 
+  mutate(facility_rating = str_replace(facility_rating, 'high', '3')) |> 
+  mutate(exam_difficulty = str_replace(exam_difficulty, 'easy', '1')) |> 
+  mutate(exam_difficulty = str_replace(exam_difficulty, 'moderate', '2')) |> 
+  mutate(exam_difficulty = str_replace(exam_difficulty, 'hard', '3')) |> 
+  mutate(sleep_quality = as.numeric(sleep_quality)) |> 
+  mutate(facility_rating = as.numeric(facility_rating)) |> 
+  mutate(exam_difficulty = as.numeric(exam_difficulty))
+
+### Dummy coding the rest ###
+
+gender_test <- fastDummies::dummy_cols(test$gender)
+course_test <- fastDummies::dummy_cols(test$course)
+method_test <- fastDummies::dummy_cols(test$study_method)
+
+### Compiling all the pieces into new dataframe ###
+
+final_test <- data.frame(id = test$id,
+                          age = test_num$age,
+                          gender_male = gender_test$.data_male,
+                          gender_female = gender_test$.data_female,
+                          course_ba = course_test$.data_ba,
+                          course_bba = course_test$.data_bba,
+                          course_bca = course_test$.data_bca,
+                          course_com = course_test$.data_b.com,
+                          course_sc = course_test$.data_b.sc,
+                          course_diploma = course_test$.data_diploma,
+                          study_hours = test_num$study_hours,
+                          class_attendance = test_num$class_attendance,
+                          internet_access = internet_test,
+                          sleep_hours = test_num$sleep_hours,
+                          sleep_quality = testtriple$sleep_quality,
+                          study_method_group = method_test$`.data_group study`,
+                          study_method_mixed = method_test$.data_mixed,
+                          study_method_online = method_test$`.data_online videos`,
+                          study_method_self = method_test$`.data_self-study`,
+                          facility_rating = testtriple$facility_rating,
+                          exam_difficulty = testtriple$exam_difficulty)
+
+### Dataframe with feature engineered variables added
+
+final_test_fe <- data.frame(id = test$id,
+                             age = test_num$age,
+                             gender_male = gender_test$.data_male,
+                             gender_female = gender_test$.data_female,
+                             course_ba = course_test$.data_ba,
+                             course_bba = course_test$.data_bba,
+                             course_bca = course_test$.data_bca,
+                             course_com = course_test$.data_b.com,
+                             course_sc = course_test$.data_b.sc,
+                             course_diploma = course_test$.data_diploma,
+                             study_hours = test_num$study_hours,
+                             class_attendance = test_num$class_attendance,
+                             internet_access = internet_test,
+                             sleep_hours = test_num$sleep_hours,
+                             sleep_quality = testtriple$sleep_quality,
+                             study_method_group = method_test$`.data_group study`,
+                             study_method_mixed = method_test$.data_mixed,
+                             study_method_online = method_test$`.data_online videos`,
+                             study_method_self = method_test$`.data_self-study`,
+                             facility_rating = testtriple$facility_rating,
+                             exam_difficulty = testtriple$exam_difficulty,
+                             study_per_sleep = test_num$study_hours / test_num$sleep_hours,
+                             sleep_x_attendance = log(test$sleep_hours * test_num$class_attendance),
+                             internet_online = internet_test * method_test$`.data_online videos`,
+                             sleeq_x_facilitr = log(testtriple$sleep_quality * testtriple$facility_rating),
+                             sleeq_x_exad = log(testtriple$sleep_quality * testtriple$exam_difficulty),
+                             facilitr_x_exad = log(testtriple$facility_rating * testtriple$exam_difficulty),
+                             exad_x_attendance = testtriple$exam_difficulty * test_num$class_attendance,
+                             facilitr_x_study = log(testtriple$facility_rating * test$study_hours),
+                             facilitr_x_attendance = testtriple$facility_rating * test_num$class_attendance,
+                             sleep_x_sleeq = log(test$sleep_hours * testtriple$sleep_quality))
+
+str(final_test)
+str(final_test_fe)
+
+xbg_test <- final_test[, -1]
+xbg_fe_test <- final_test_fe[, -1]
+
+###################################################
+#             Model creation                      #
+###################################################
+
+### Matrix for XGBoost ###
+final_train_matrix <- data.matrix(xbg_train)
+final_train_fe_matrix <- data.matrix(xbg_fe_train)
+
+final_test_matrix <- data.matrix(xbg_test)
+final_test_fe_matrix <- data.matrix(xbg_fe_test)
+
+### DMatrix for XGBoost ###
+ttrain <- xgb.DMatrix(data = final_train_matrix, label = y)
+fetrain <- xgb.DMatrix(data = final_train_fe_matrix, label = y)
+
+ttest <- xgb.DMatrix(data = final_test_matrix)
+fetest <- xgb.DMatrix(data = final_test_fe_matrix)
+
+#### Hyperparameter tuning ###
+params <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror", 
+  eta = 0.25,                    
+  max_depth = 6,                 
+  subsample = 1,               
+  colsample_bytree = 1         
+)
+
+grid <- expand.grid(
+  eta = c(0.20, 0.24, 0.28),
+  max_depth = c(5, 6, 7)
+)
+
+results <- apply(grid, 1, function(params) {
+  xgb.cv(
+    params = as.list(params),
+    data = fetrain,
+    nrounds = 1000,
+    nfold = 5,
+    early_stopping_rounds = 25,
+    verbose = 1,
+    metrics = list('rmse')
+  )
+})
+
+
+print(results)
+
+### Final models and prediction creation ###
+
+model_train <- xgboost(ttrain,
+                 eta = 0.20,
+                 max.depth = 5,
+                 subsample = 1,
+                 colsample_bytree = 1,
+                 nround = 718,
+                 tree_method = "approx",
+                 objective = "reg:squarederror",
+                 eval_metric = 'rmse')
+
+model_fetrain <- xgboost(fetrain,
+                 eta = 0.25,
+                 max.depth = 6,
+                 subsample = 1,
+                 colsample_bytree = 1,
+                 nround = 312,
+                 tree_method = "approx",
+                 objective = "reg:squarederror",
+                 eval_metric = 'rmse')
+
+pred <- predict(model_train, ttest)
+pred
