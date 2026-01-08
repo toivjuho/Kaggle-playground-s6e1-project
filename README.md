@@ -26,4 +26,5 @@ Editor notes:
 - Modelling
   * Due the limitation of gear the modelling part is limited to using only one fairly fast model: XGBoost
   * Due the same issues the hyperparameter tuning is done via minimal grid search method
+  * The main goal is to show the proficiency of using these methods
   * R-code features best performed models from with FE and without FE for comparison
