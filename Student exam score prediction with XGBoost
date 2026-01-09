@@ -3,7 +3,6 @@ setwd("C:")
 library(tidyverse)
 library(fastDummies)
 library(xgboost)
-library(corrplot)
 
 ### Datasets downloaded from Kaggle. Link in the description file. ###
 
@@ -292,11 +291,11 @@ model_train <- xgboost(ttrain,
                  eval_metric = 'rmse')
 
 model_fetrain <- xgboost(fetrain,
-                 eta = 0.25,
-                 max.depth = 6,
+                 eta = 0.20,
+                 max.depth = 5,
                  subsample = 1,
                  colsample_bytree = 1,
-                 nround = 312,
+                 nround = 711,
                  tree_method = "approx",
                  objective = "reg:squarederror",
                  eval_metric = 'rmse')
