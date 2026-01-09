@@ -17,6 +17,7 @@ This project includes following steps:
 - Predictions
 
 Editor notes:
+- Feature engineering did not improve the result
 - Data tidying
   * Tidying is likely not performed with the most efficient way. Original data is sectioned based on which kind of changes variables needed
   * Some of the transformations are done differently to avoid certain issues/improve the quality of variables in feature engineering (ie. study_hours, sleep_hours and class_attendance is transformed into similar procentual form and categorial variables with three categories are valued with 1-3)
