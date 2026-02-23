@@ -1,0 +1,215 @@
+setwd("D:")
+
+library(tidyverse)
+library(randomForest)
+library(xgboost)
+library(fastDummies)
+library(caret)
+
+### Dataset downloaded from Kaggle. Link in the description file. ###
+
+ori <- read.csv('Loan.csv')
+
+### Tidying data ###
+
+ori <- ori [2:35]
+
+### Changing some variables into a logarithmic form and giving numerical value for ordinal variables ###
+
+ori_num <- ori |> 
+  mutate(Experience = Experience + 1) |> 
+  mutate(Age = log(Age),
+         AnnualIncome = log(AnnualIncome),
+         CreditScore = log(CreditScore),
+         Experience = log(Experience),
+         LoanAmount = log(LoanAmount),
+         LoanDuration = log(LoanDuration),
+         MonthlyDebtPayments = log(MonthlyDebtPayments),
+         PaymentHistory = log(PaymentHistory),
+         LengthOfCreditHistory = log(LengthOfCreditHistory),
+         SavingsAccountBalance = log(SavingsAccountBalance),
+         CheckingAccountBalance = log(CheckingAccountBalance),
+         TotalAssets = log(TotalAssets),
+         TotalLiabilities = log(TotalLiabilities),
+         MonthlyIncome = log(MonthlyIncome),
+         NetWorth = log(NetWorth),
+         MonthlyLoanPayment = log(MonthlyLoanPayment),
+         EducationLevel = str_replace(EducationLevel, 'High School', '1'),
+         EducationLevel = str_replace(EducationLevel, 'Associate', '2'),
+         EducationLevel = str_replace(EducationLevel, 'Bachelor', '3'),
+         EducationLevel = str_replace(EducationLevel, 'Master', '4'),
+         EducationLevel = str_replace(EducationLevel, 'Doctorate', '5'),
+         EmploymentStatus = str_replace(EmploymentStatus, 'Unemployed', '0'),
+         EmploymentStatus = str_replace(EmploymentStatus, 'Self-Employed', '1'),
+         EmploymentStatus = str_replace(EmploymentStatus, 'Employed', '2'),
+         MaritalStatus = str_replace(MaritalStatus, 'Married', '1'),
+         MaritalStatus = str_replace(MaritalStatus, 'Single', '0'),
+         MaritalStatus = str_replace(MaritalStatus, 'Divorced', '0'),
+         MaritalStatus = str_replace(MaritalStatus, 'Widowed', '0')) |> 
+  mutate(EducationLevel = as.numeric(EducationLevel),
+         EmploymentStatus = as.numeric(EmploymentStatus),
+         MaritalStatus = as.numeric(MaritalStatus),
+         id = row_number())
+
+### Removing dummified variables from this dataset ### 
+ori_num <- ori_num[-11]
+ori_num <- ori_num[-17]
+
+### Dummy coding and tidying 2 variables ###
+
+homeowner <- fastDummies::dummy_cols(ori$HomeOwnershipStatus)
+purpose <- fastDummies::dummy_cols(ori$LoanPurpose)
+
+homeowner <- homeowner[-3]
+homeowner <- homeowner[-1]
+homeowner <- homeowner |> 
+  rename(Owner_Mort = .data_Mortgage,
+         Owner_Own = .data_Own,
+         Owner_Rent = .data_Rent) |> 
+  mutate(id = row_number())
+
+purpose <- purpose[2:5]
+purpose <- purpose |> 
+  rename(Purpose_Auto = .data_Auto,
+         Purpose_Debt_Con = `.data_Debt Consolidation`,
+         Purpose_Edu = .data_Education,
+         Purpose_Home = .data_Home) |> 
+  mutate(id = row_number())
+
+### Merging everything back together ###
+
+dumy <- merge(homeowner, purpose, by= "id")
+final <- merge(ori_num, dumy, by = "id")
+
+### Removing id ###
+
+final <- final [-1]
+
+### Training and test set creation ###
+set.seed(1234)
+
+
+trainIndex <- sample(1:nrow(final), 0.8 * nrow(final))
+
+trainData <- final[trainIndex, ]
+testData <- final[-trainIndex, ]
+
+### Setting target feature ###
+
+y <- trainData$LoanApproved
+
+yt <- testData$LoanApproved
+
+train <- trainData[-32]
+
+test <- testData[-32]
+
+### Creating Dmatrix for XGBoost ###
+
+final_train_matrix <- data.matrix(train)
+
+final_test_matrix <- data.matrix(test)
+
+ttrain <- xgb.DMatrix(data = final_train_matrix, label = y)
+
+ttest <- xgb.DMatrix(data = final_test_matrix)
+
+
+### Hyperparameter tuning ###
+
+params <- list(
+  booster = "gbtree",
+  objective = "binary:logistic", 
+  eta = 0.20,                    
+  max_depth = 5,                 
+  subsample = 1,               
+  colsample_bytree = 1         
+)
+
+grid <- expand.grid(
+  eta = c(0.15, 0.2, 0.25),
+  max_depth = c(4, 5, 6)
+)
+
+results <- apply(grid, 1, function(params) {
+  xgb.cv(
+    params = as.list(params),
+    data = ttrain,
+    nrounds = 100,
+    nfold = 5,
+    early_stopping_rounds = 10,
+    verbose = 1,
+    metrics = list('auc')
+  )
+})
+
+
+print(results)
+
+### Final model implementation
+
+model_train <- xgboost(ttrain,
+                       eta = 0.15,
+                       max.depth = 4,
+                       subsample = 1,
+                       colsample_bytree = 1,
+                       nround = 96,
+                       tree_method = "approx",
+                       objective = "binary:logistic",
+                       eval_metric = 'auc')
+
+### Creating predictions ###
+
+predictions <- predict(model_train, newdata = ttest)
+predictions
+
+### Testing model prediction accuracy in original form ###
+
+mod <- ifelse(predictions > 0.5, 1, 0)
+
+mods <- as.factor(mod)
+
+ytt <- as.factor(yt)
+
+conf_matrix <- confusionMatrix(mods, ytt)
+print(conf_matrix)
+
+### Creating alternative grouping for prediction use ###
+
+mod2 <- predictions |> 
+  replace(predictions > 0.6, 1)
+
+mod2 <- mod2 |> 
+  replace(mod2 < 0.4, 0)
+
+mod2
+
+### Creating a new dataframe containing predictions grouped in 2 different ways and testing dataset target feature ###
+
+data <- data.frame(mod2, mod, yt)
+
+### Filtering incorrect predictions ###
+
+aincor <- data |> 
+  mutate(nope = mod + yt) |> 
+  filter(nope == 1)
+
+### Total of 177 incorrect predictions ###
+
+### Filtering unclear predictions ###
+
+aunclear <- data |> 
+  filter(mod2 > 0.4) |> 
+  filter(mod2 < 0.6)
+
+### Total of 141 predictions between 0.4 and 0.6 likelihood ###
+
+### Filtering incorrect and unclear predictions ###
+
+ainclear <- data |> 
+  mutate(nope = mod + yt) |> 
+  filter(nope == 1) |> 
+  filter(mod2 > 0.4) |> 
+  filter(mod2 < 0.6)
+
+### Total of 57 cases where prediction was incorrect and prediction was close to 0.5 cut ###
