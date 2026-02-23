@@ -1,13 +1,14 @@
-The goal of this project is to showcase the proficiency of myself in a basic prediction problem. 
-This is done by using a Kaggle playground competition in which the goal is to predict students exam results based on dataset given. 
+The goal of these projects are to showcase the proficiency of myself in a basic prediction problem. 
+These projects are either Kaggle competitions or they are inspired by datasets in Kaggle's website.
 
-Link to the datasets and competition instructions:
+Links to the datasets and competition instructions:
 https://www.kaggle.com/competitions/playground-series-s6e1/overview
 
 For the feature engineering the following example was used to influence of creating the new variables:
 https://www.kaggle.com/code/mdevian/ps-s6e1-student-test-scores-xgboost
+https://www.kaggle.com/datasets/lorenzozoppelletto/financial-risk-for-loan-approval
 
-This project includes following steps:
+These projects can include following steps:
 - Data tidying
   * Data transformation for approriate form for the use of XGBoost
 - Feature Engineering
@@ -16,7 +17,7 @@ This project includes following steps:
   * Limited hyperparameter tuning and best models with and without FE included
 - Predictions
 
-Editor notes:
+Editor notes for competition s6e1:
 - Feature engineering did not improve the result
 - Data tidying
   * Tidying is likely not performed with the most efficient way. Original data is sectioned based on which kind of changes variables needed
