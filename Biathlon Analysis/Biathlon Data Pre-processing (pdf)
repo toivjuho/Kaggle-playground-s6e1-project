@@ -1,0 +1,201 @@
+### THIS IS EXAMPLE OF THE DATA PREPROCESSING PROCESS TO CREATE SOME NEW MEASURES TO VALUATE THE PERFORMANCE OF ATHLETES ###
+
+library(tidyverse)
+library(pdftools)
+library(lubridate)
+library(purrr)
+library(matrixStats)
+
+# Functions to call for pdf files based on the race format
+
+sprintraces <- function(df) {
+  df <- df |> 
+    filtering() |> 
+    removefunc() |> 
+    sprintgrouping() |> 
+    sprintmutation() |> 
+    sprintanalysis() |> 
+    sprint_rates() 
+}
+
+pursuitraces <- function(df) {
+  df <- df |> 
+    filtering() |> 
+    removefunc() |> 
+    indigrouping() |> 
+    indimutation() |> 
+    massanalysis() |> 
+    indi_rates()
+}
+
+indiraces <- function(df) {
+  df <- df |> 
+    filtering() |> 
+    removefunc() |> 
+    indigrouping() |> 
+    indimutation() |> 
+    indianalysis() |> 
+    indi_rates()
+  
+}
+
+massraces <- function(df) {
+  df <- df |>
+    filtering() |> 
+    removefunc() |> 
+    indigrouping() |> 
+    indimutation() |> 
+    massanalysis() |> 
+    indi_rates()
+  }
+
+
+# Data tidying functions
+filtering <- function(df) {
+  df <- df |> 
+    readr::read_lines() |> 
+    str_squish() |> 
+    strsplit(split = " ")
+  
+  df <- Filter(length, df)
+  
+  df <- df[-1:-6]
+  
+  wrem <- c("JURY", "Jury", "DID", "Did", "LEGEND", "Legend", "LAPPED", "Lapped")
+  frem <- grep(paste(wrem, collapse = "|"), df)
+  
+  if (length(frem) > 0) {
+    df <- df[1:(min(frem) - 1)]
+  }
+}
+
+removefunc <- function(df) {
+  words <- c("Cumulative", "Loop", "Ski", "Name", "Behind", "Rk", "BTHW", "BTHM")
+  
+  df <- df[!sapply(df, function(x) any(grepl(paste(words, collapse = "|"), x)))]
+}
+
+
+
+# Sprint race related functions
+
+sprintgrouping <- function(df) {
+  groups <- split(df, ceiling(seq_along(df) / 5))
+  
+  df <- as.data.frame(do.call(rbind,lapply(groups, function(x) {
+    c(paste(x[[1]][c(1:8)], collapse = ";"),
+      paste(x[[2]][c(2:3, 6:7)], collapse = ";"),
+      paste(x[[3]][c(3, 6)], collapse = ";"),
+      paste(x[[4]][c(3, 6, 9)], collapse = ";"),
+      paste(x[[5]][c(3:4)], collapse = ";"))
+  })))
+}
+
+sprintmutation <- function(df) {
+  df <- as.data.frame(df, stringsAsFactors = F) |> 
+    separate_wider_delim(V1, delim = ";", names = c("rank", "bib", "V1"), too_many = "merge") |> 
+    separate_wider_delim(V2, delim = ";", names = c("pen1", "shoot1", "pen2", "shoot2")) |> 
+    separate_wider_delim(V3, delim = ";", names = c("range1", "range2")) |> 
+    separate_wider_delim(V4, delim = ";", names = c("course1", "course2", "course3")) |> 
+    separate_wider_delim(V5, delim = ";", names = c("pentime1", "pentime2")) |> 
+    mutate(V1 = strsplit(V1, ";")) |> 
+    mutate(fname = sapply(V1, \(x) paste(x[grepl("^[A-Z][a-z]+(-[A-Z][a-z]+)*$", x)], collapse = " ")),
+           surname = sapply(V1, \(x) paste(x[grepl("^[A-ZÅÄÖ]+(-[A-ZÅÄÖ]+)*$", x)], collapse = " ")),
+           .after = 2) |> 
+    mutate(sname = stringr::str_remove(surname, ";?[A-Z]{3}$"),
+           country = stringr::str_extract(surname, "[A-Z]{3}$"),
+           .after = 3) |> 
+    select(!6:7) |> 
+    mutate(shoot1 = if_else(grepl(":", shoot1), period_to_seconds(ms(shoot1)),
+                            as.numeric(shoot1)),
+           shoot2 = if_else(grepl(":", shoot2), period_to_seconds(ms(shoot2)),
+                            as.numeric(shoot2)),
+           across(range1:range2, ~ if_else(grepl(":", .),
+                                           period_to_seconds(ms(.)),
+                                           as.numeric(.))),
+           across(course1:course3, ~ period_to_seconds(ms(.))),
+           across(pentime1:pentime2, ~ if_else(grepl(":", .),
+                                               period_to_seconds(ms(.)),
+                                               as.numeric(.))),
+           pen1 = as.numeric(pen1),
+           pen2 = as.numeric(pen2),
+           rank = as.numeric(rank),
+           bib = as.numeric(bib))
+}
+
+sprintanalysis <- function(df, nm) {
+  df <- df |> 
+    select(rank, bib, sname, fname, country, course1, range1, pen1, pentime1, course2, range2, pen2, pentime2, course3) |> 
+    mutate(total = course1 + range1 + pentime1 + course2 + range2 + pentime2 + course3,
+           course_total = course1 + course2 + course3,
+           range_total = range1 + range2,
+           .after = country)
+  a <- df |> 
+    slice_min(order_by = course_total, n = 40)
+  
+  lap1_mean <- mean(a$course1)
+  lap2_mean <- mean(a$course2)
+  lap3_mean <- mean(a$course3)
+  
+  b <- df |> 
+    slice_min(order_by = range_total, n = 40)
+  
+  range1_mean <- mean(b$range1)
+  range2_mean <- mean(b$range2)
+  avg_range <- range1_mean + range2_mean + 35
+  
+  c <- df |> 
+    filter(pen1 == 0) |> 
+    slice_min(order_by = pentime1, n = 15)
+  
+  nopen1 <- mean(c$pentime1)
+  
+  d <- df |> 
+    filter(pen2 == 0) |> 
+    slice_min(order_by = pentime1, n = 15)
+  
+  nopen2 <- mean(d$pentime2)
+  
+  df <- df |> 
+    mutate(behind = total - min(total),
+           lap1_rate = course1 - lap1_mean,
+           lap2_rate = course2 - lap2_mean,
+           lap3_rate = course3 - lap3_mean,
+           range1_rate = range1 - range1_mean,
+           range2_rate = range2 - range2_mean,
+           penalties1 = pentime1 - nopen1,
+           penalties2 = pentime2 - nopen2) |> 
+    mutate(range_avg = range1 + range2 + pentime1 + pentime2 - avg_range)
+}
+
+sprint_rates <- function(df) {
+  df <- df |> 
+    select(sname, fname, country, lap1_rate:range2_rate, range_avg)
+}
+
+# NOTE! Other race formats works more or less similarly. The functions have been modified to extract the information into same form 
+# (ie. when there is 4 shootings and 5 laps, there's more mutations).
+
+# These functions are now in separate file which is called upon for the use.
+
+setwd("C:/)
+
+source("C:/Source.R")
+
+ostsres <- pdf_text("Östersund_W_Sprint_Results.pdf")
+
+sprints <- list(ostsres = ostsres)
+
+sprints <- lapply(sprints, sprintraces)
+
+sprints <- imap(sprints, function(df, nm) {
+  prefix <- substr(nm, 1, 3)
+  
+  df |> 
+    rename_with(
+      ~ paste0(.x, "_", prefix),
+      .cols = where(is.double)
+    )
+})
+
+sprintrates <- reduce(.x = sprints, merge, by = c(1, 2, 3), all = T)
